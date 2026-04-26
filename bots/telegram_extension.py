@@ -3,6 +3,7 @@ from typing import Dict
 
 from utils.logger import get_logger
 from config.secrets import SECRETS
+from utils.helpers import format_price, safe_round
 
 
 logger = get_logger(__name__)
@@ -27,61 +28,102 @@ class TelegramExtensionBot:
         self.chat_id = SECRETS["telegram_extension_chat_id"]
         self.base_url = f"https://api.telegram.org/bot{self.token}"
 
+    # =========================
+    # 📤 SAFE SEND
+    # =========================
     def send_message(self, text: str):
-        try:
-            requests.post(
-                f"{self.base_url}/sendMessage",
-                json={
-                    "chat_id": self.chat_id,
-                    "text": text,
-                    "parse_mode": "Markdown"
-                }
-            )
-        except Exception as e:
-            logger.error(f"Extension send error: {e}")
 
-    def send_image(self, image_path: str, caption: str = ""):
-        try:
-            with open(image_path, "rb") as img:
-                requests.post(
-                    f"{self.base_url}/sendPhoto",
-                    files={"photo": img},
-                    data={
+        url = f"{self.base_url}/sendMessage"
+
+        for attempt in range(3):
+            try:
+                res = requests.post(
+                    url,
+                    json={
                         "chat_id": self.chat_id,
-                        "caption": caption,
+                        "text": text,
                         "parse_mode": "Markdown"
-                    }
+                    },
+                    timeout=10
                 )
-        except Exception as e:
-            logger.error(f"Extension image error: {e}")
+
+                if res.status_code == 200:
+                    logger.info("Extension message sent")
+                    return True
+                else:
+                    logger.warning(f"Extension failed [{res.status_code}]: {res.text}")
+
+            except Exception as e:
+                logger.error(f"Extension send error (attempt {attempt+1}): {e}")
+
+        logger.error("Extension message FAILED after retries")
+        return False
+
+    # =========================
+    # 📤 IMAGE SEND
+    # =========================
+    def send_image(self, image_path: str, caption: str = ""):
+
+        url = f"{self.base_url}/sendPhoto"
+
+        for attempt in range(3):
+            try:
+                with open(image_path, "rb") as img:
+                    res = requests.post(
+                        url,
+                        files={"photo": img},
+                        data={
+                            "chat_id": self.chat_id,
+                            "caption": caption,
+                            "parse_mode": "Markdown"
+                        },
+                        timeout=15
+                    )
+
+                    if res.status_code == 200:
+                        logger.info("Extension image sent")
+                        return True
+                    else:
+                        logger.warning(f"Image failed [{res.status_code}]: {res.text}")
+
+            except Exception as e:
+                logger.error(f"Image error (attempt {attempt+1}): {e}")
+
+        logger.error("Extension image FAILED")
+        return False
 
     # =========================
     # ⚡ FORMAT TRADE
     # =========================
     def format_trade(self, trade: Dict, symbol: str) -> str:
 
-        if trade["action"] != "TRADE":
+        if trade.get("action") != "TRADE":
             return ""
 
-        strategy = trade.get("strategy", "unknown")
-        emoji = STRATEGY_EMOJI.get(strategy, "📊")
+        try:
+            strategy = trade.get("strategy", "unknown")
+            emoji = STRATEGY_EMOJI.get(strategy, "📊")
 
-        side_emoji = "🟢" if trade["side"] == "LONG" else "🔴"
+            side_emoji = "🟢" if trade.get("side") == "LONG" else "🔴"
 
-        return f"""
+            return f"""
 ⚡ *HIGH RISK TRADE*
 
 {emoji} *{strategy.upper()}*
-{side_emoji} *{trade['side']}* — {symbol}
+{side_emoji} *{trade.get('side')}* — {symbol}
 
-📍 Entry: `{trade['entry']:.4f}`
-🛑 SL: `{trade['stop_loss']:.4f}`
-🎯 TP: `{trade['take_profit']:.4f}`
+📍 Entry: `{format_price(trade.get('entry'))}`
+🛑 SL: `{format_price(trade.get('stop_loss'))}`
+🎯 TP: `{format_price(trade.get('take_profit'))}`
 
-🧠 Confidence: `{trade['confidence']}%`
+🧠 Confidence: `{safe_round(trade.get('confidence', 0), 2)}%`
 
 🚨 *Aggressive Setup*
 """
+
+        except Exception as e:
+            logger.error(f"Extension format error: {e}")
+            return ""
 
     # =========================
     # 📤 SEND TRADE
@@ -92,6 +134,8 @@ class TelegramExtensionBot:
 
         if not msg:
             return
+
+        logger.info(f"Sending extension trade: {symbol} | {trade.get('side')}")
 
         if chart_path:
             self.send_image(chart_path, msg)

@@ -3,6 +3,7 @@ from typing import Dict
 
 from utils.logger import get_logger
 from config.secrets import SECRETS
+from utils.helpers import format_price, safe_round
 
 
 logger = get_logger(__name__)
@@ -109,32 +110,38 @@ class TelegramMainBot:
     # =========================
     def format_trade(self, trade: Dict, symbol: str) -> str:
 
-        if trade["action"] != "TRADE":
+        if trade.get("action") != "TRADE":
             return ""
 
-        strategy = trade.get("strategy", "unknown")
-        emoji = STRATEGY_EMOJI.get(strategy, "📊")
+        try:
+            strategy = trade.get("strategy", "unknown")
+            emoji = STRATEGY_EMOJI.get(strategy, "📊")
 
-        side_emoji = "🟢" if trade["side"] == "LONG" else "🔴"
+            side = trade.get("side", "N/A")
+            side_emoji = "🟢" if side == "LONG" else "🔴"
 
-        message = f"""
+            message = f"""
 🚨 *TRADE SIGNAL* 🚨
 
 {emoji} *{strategy.upper()}*
-{side_emoji} *{trade['side']}* — {symbol}
+{side_emoji} *{side}* — {symbol}
 
-📍 Entry: `{trade['entry']:.4f}`
-🛑 Stop Loss: `{trade['stop_loss']:.4f}`
-🎯 Take Profit: `{trade['take_profit']:.4f}`
+📍 Entry: `{format_price(trade.get('entry'))}`
+🛑 Stop Loss: `{format_price(trade.get('stop_loss'))}`
+🎯 Take Profit: `{format_price(trade.get('take_profit'))}`
 
-🧠 Confidence: `{trade['confidence']}%`
+🧠 Confidence: `{safe_round(trade.get('confidence', 0), 2)}%`
 
-💬 _{trade['reason']}_
+💬 _{trade.get('reason', 'No reason provided')}_
 
 ━━━━━━━━━━━━━━━
 """
 
-        return message
+            return message
+
+        except Exception as e:
+            logger.error(f"Format trade error: {e}")
+            return ""
 
     # =========================
     # 📤 SEND TRADE
@@ -144,7 +151,10 @@ class TelegramMainBot:
         msg = self.format_trade(trade, symbol)
 
         if not msg:
+            logger.warning("Empty trade message, skipping send")
             return
+
+        logger.info(f"Sending trade to Telegram: {symbol} | {trade.get('side')}")
 
         if chart_path:
             self.send_image(chart_path, msg)
