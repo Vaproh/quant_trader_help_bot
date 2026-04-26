@@ -2,9 +2,8 @@ from typing import Dict
 
 from utils.logger import get_logger
 from utils.helpers import calculate_rr, safe_round
-from config.constants import (
-    MAIN_BOT_MAX_LEVERAGE
-)
+from config.settings import SETTINGS
+from config.constants import MAIN_BOT_MAX_LEVERAGE, EXTENSION_MAX_LEVERAGE
 
 
 logger = get_logger(__name__)
@@ -12,8 +11,15 @@ logger = get_logger(__name__)
 
 class DecisionEngine:
 
-    def __init__(self):
-        pass
+    def __init__(self, min_confidence=None, max_leverage=None, risk_pct=None, reward_pct=None):
+        """
+        Configurable Decision Engine.
+        Parameters can be overridden per-engine.
+        """
+        self.min_confidence = min_confidence or SETTINGS["decision"]["min_confidence"]
+        self.max_leverage = max_leverage or SETTINGS["decision"]["max_leverage"]
+        self.risk_pct = risk_pct or 0.01   # 1%
+        self.reward_pct = reward_pct or 0.02  # 2%
 
     # =========================
     # 🎯 BUILD FINAL TRADE
@@ -27,6 +33,17 @@ class DecisionEngine:
             side = decision["side"]
             entry = float(decision["entry"])
             confidence = decision["confidence"]
+            strategy = decision.get("strategy", "unknown")
+
+            # =========================
+            # 🎯 CONFIDENCE FILTER
+            # =========================
+            if confidence < self.min_confidence:
+                return {
+                    "action": "WAIT",
+                    "reason": f"Confidence {confidence} below threshold {self.min_confidence}",
+                    "confidence": confidence
+                }
 
             # =========================
             # SL / TP CALCULATION
@@ -55,6 +72,7 @@ class DecisionEngine:
                 "rr": safe_round(rr, 2),
                 "leverage": leverage,
                 "confidence": confidence,
+                "strategy": strategy,
                 "reason": decision.get("reason", "")
             }
 
@@ -109,7 +127,8 @@ class DecisionEngine:
             if rr > 2:
                 base += 1
 
-            return min(base, MAIN_BOT_MAX_LEVERAGE)
+            # Cap at engine-specific max
+            return min(base, self.max_leverage)
 
         except Exception as e:
             logger.error(f"Leverage error: {e}")

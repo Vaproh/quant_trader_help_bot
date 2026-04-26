@@ -1,6 +1,7 @@
 import time
 
 from utils.logger import get_logger
+from config.settings import SETTINGS
 from data.market_data import MarketData
 from data.news import NewsAnalyzer
 from core.strategy_decider import StrategyDecider
@@ -26,40 +27,61 @@ class PaperTrader:
         news: NewsAnalyzer,
         symbol: str = "BTC/USDT",
         interval: str = "1m",
-        balance: float = 100.0,
-        loop_delay: int = 10,
+        balance: float = None,
+        loop_delay: int = None,
         repo=None,
-        strategy_names=None
+        strategy_names=None,
+        scanner=None,
+        stats_bot=None
     ):
         self.market = market
         self.news = news
 
         self.symbol = symbol
         self.interval = interval
-        self.loop_delay = loop_delay
+        self.loop_delay = loop_delay or SETTINGS["paper_trader"]["loop_delay"]
+        self.balance = balance or SETTINGS["paper_trader"]["initial_balance"]
 
         # Core
-        self.decider = StrategyDecider(strategy_names=strategy_names)
+        self.decider = StrategyDecider(strategy_names=strategy_names, scanner=scanner)
         self.decision_engine = DecisionEngine()
-        self.sizer = PositionSizer(balance=balance)
-        self.manager = TradeManager()
-
-        # External systems
-        self.telegram = TelegramMainBot()
-        self.stats_bot = TelegramStatsBot()
-        self.repo = repo
+        self.sizer = PositionSizer(balance=self.balance)
+        self.manager = TradeManager(max_trades=SETTINGS["paper_trader"]["max_open_trades"])
 
         # Charts
         self.chart = ChartGenerator()
 
         # 🔥 CONTROL SYSTEM
-        self.last_trade_time = 0
-        self.trade_cooldown = 60  # seconds
+        self.symbol_cooldowns = {}  # symbol -> last_trade_time
+        self.direction_cooldowns = {}  # symbol_side -> last_trade_time
+        self.symbol_cooldown = SETTINGS["paper_trader"]["symbol_cooldown"]
+        self.direction_cooldown = SETTINGS["paper_trader"]["direction_cooldown"]
 
         self.last_strategy = None
         self.last_entry_price = None
 
+        # External systems (after manager/sizer)
+        self.telegram = TelegramMainBot()
+        self.stats_bot = stats_bot or TelegramStatsBot(repo=repo)
+        self.repo = repo
+
         self.running = False
+
+    # =========================
+    # 📥 LOAD STATE
+    # =========================
+    def _load_state(self):
+        if self.repo:
+            # Load balance
+            last_balance = self.repo.get_last_balance()
+            if last_balance is not None:
+                self.sizer.balance = last_balance
+                logger.info(f"Loaded balance: {last_balance}")
+
+            # Load active trades
+            active_trades = self.repo.get_active_trades(self.symbol)
+            self.manager.load_active_trades(active_trades)
+            logger.info(f"Loaded {len(active_trades)} active trades for {self.symbol}")
 
     # =========================
     # 🚀 START LOOP
@@ -91,17 +113,26 @@ class PaperTrader:
 
         logger.info(f"---- {self.symbol} NEW CYCLE ----")
 
-        candles = self.market.get_klines(self.symbol, self.interval, 100)
+        # Fetch multi-timeframe data
+        candles_1m = self.market.get_klines(self.symbol, "1m", 100)
+        candles_15m = self.market.get_klines(self.symbol, "15m", 50)
+        candles_1h = self.market.get_klines(self.symbol, "1h", 20)
 
-        if not candles:
-            logger.warning("No market data")
+        mtf_candles = {
+            "1m": candles_1m,
+            "15m": candles_15m,
+            "1h": candles_1h
+        }
+
+        if not candles_1m:
+            logger.warning("No 1m market data")
             return
 
-        current_price = candles[-1][4]
+        current_price = candles_1m[-1][4]
 
         sentiment = self.news.get_sentiment(self.symbol.split("/")[0])
 
-        raw = self.decider.decide(candles, sentiment)
+        raw = self.decider.decide(mtf_candles, sentiment, self.symbol)
         trade = self.decision_engine.build(raw)
 
         # =========================
@@ -109,9 +140,20 @@ class PaperTrader:
         # =========================
         if trade.get("action") == "TRADE":
 
-            # ⏳ COOLDOWN
-            if time.time() - self.last_trade_time < self.trade_cooldown:
-                logger.info("Cooldown active, skipping trade")
+            now = time.time()
+            side = trade.get("side")
+
+            # ⏳ SYMBOL COOLDOWN
+            last_symbol_trade = self.symbol_cooldowns.get(self.symbol, 0)
+            if now - last_symbol_trade < self.symbol_cooldown:
+                logger.info(f"Symbol cooldown active for {self.symbol}, skipping")
+                return
+
+            # ⏳ DIRECTION COOLDOWN
+            direction_key = f"{self.symbol}_{side}"
+            last_direction_trade = self.direction_cooldowns.get(direction_key, 0)
+            if now - last_direction_trade < self.direction_cooldown:
+                logger.info(f"Direction cooldown active for {direction_key}, skipping")
                 return
 
             # 🚫 SAME STRATEGY
@@ -141,13 +183,17 @@ class PaperTrader:
                     trade["db_id"] = trade_id
 
                 # 📊 GENERATE CHART
-                chart_path = self.chart.generate_trade_chart(
-                    symbol=self.symbol,
-                    candles=candles,
-                    entry=trade["entry"],
-                    stop_loss=trade["stop_loss"],
-                    take_profit=trade["take_profit"]
-                )
+                try:
+                    chart_path = self.chart.generate_trade_chart(
+                        symbol=self.symbol,
+                        candles=candles_1m,
+                        entry=trade["entry"],
+                        stop_loss=trade["stop_loss"],
+                        take_profit=trade["take_profit"]
+                    )
+                except Exception as e:
+                    logger.error(f"Chart generation error: {e}")
+                    chart_path = None
 
                 logger.info(f"Trade opened: {trade}")
 
@@ -155,7 +201,9 @@ class PaperTrader:
                 self.telegram.send_trade(trade, self.symbol, chart_path)
 
                 # 🔥 UPDATE CONTROL STATE
-                self.last_trade_time = time.time()
+                now = time.time()
+                self.symbol_cooldowns[self.symbol] = now
+                self.direction_cooldowns[f"{self.symbol}_{side}"] = now
                 self.last_strategy = trade.get("strategy")
                 self.last_entry_price = trade["entry"]
 
@@ -176,12 +224,8 @@ class PaperTrader:
         logger.info(f"Active: {len(self.manager.active_trades)}")
         logger.info(f"Closed: {len(self.manager.closed_trades)}")
 
-        # =========================
-        # 📊 SEND STATS
-        # =========================
-        if len(self.manager.closed_trades) >= 5:
-            stats = Stats(self.manager.closed_trades).summary()
-            self.stats_bot.send_stats(stats)
+        # Stats are sent automatically when trades close via _handle_closed_trades
+        # Use /stats command for on-demand summary
 
     # =========================
     # 💰 HANDLE CLOSED TRADES
@@ -209,6 +253,7 @@ class PaperTrader:
                 self.repo.save_balance(self.sizer.balance)
 
             # 📤 TELEGRAM RESULT
-            self.stats_bot.send_trade_result(trade, self.symbol)
+            if self.stats_bot:
+                self.stats_bot.send_trade_result(trade, self.symbol)
 
             trade["counted"] = True

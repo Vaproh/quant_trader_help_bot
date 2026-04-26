@@ -1,6 +1,8 @@
 import os
-from typing import List, Optional
+import matplotlib
+matplotlib.use('Agg')  # Headless mode
 import matplotlib.pyplot as plt
+from typing import List, Optional
 
 
 class ChartGenerator:

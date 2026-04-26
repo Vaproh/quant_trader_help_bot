@@ -26,7 +26,11 @@ class RangeStrategy:
     # =========================
     # 🔍 ANALYZE
     # =========================
-    def analyze(self, candles: List[List]) -> Dict:
+    def analyze(self, mtf_candles) -> Dict:
+        if isinstance(mtf_candles, dict):
+            candles = mtf_candles.get("1m", [])
+        else:
+            candles = mtf_candles
 
         if len(candles) < self.lookback + 5:
             return {"signal": None}

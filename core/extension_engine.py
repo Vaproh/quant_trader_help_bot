@@ -8,6 +8,8 @@ from bots.telegram_extension import TelegramExtensionBot
 from core.strategy_decider import StrategyDecider
 from core.decision import DecisionEngine
 from config.constants import EXTENSION_MAX_LEVERAGE
+from config.settings import SETTINGS
+from storage.repository import Repository
 
 
 logger = get_logger(__name__)
@@ -22,22 +24,31 @@ class ExtensionEngine:
         symbols: List[str],
         balance: float = 100.0,
         loop_delay: int = 5,
-        strategy_names = None
+        strategy_names = None,
+        scanner=None,
+        stats_bot=None,
+        repo=None
     ):
         self.market = market
         self.news = news
         self.symbols = symbols
 
         self.strategy_names = strategy_names
-
         self.loop_delay = loop_delay
         self.balance = balance
 
         self.telegram = TelegramExtensionBot()
+        self.scanner = scanner
+        self.stats_bot = stats_bot
+        self.repo = repo
 
         self.traders: List[PaperTrader] = []
         self.threads: List[threading.Thread] = []
         self.running = False
+
+        # Extension-specific decision config
+        self.min_confidence = SETTINGS["extension"]["min_confidence"]
+        self.max_leverage = SETTINGS["extension"]["max_leverage"]
 
         self._init_traders()
 
@@ -55,11 +66,23 @@ class ExtensionEngine:
                 interval="1m",
                 balance=self.balance,
                 loop_delay=self.loop_delay,
-                strategy_names=self.strategy_names
+                strategy_names=self.strategy_names,
+                scanner=self.scanner,
+                stats_bot=self.stats_bot,
+                repo=self.repo
             )
 
-            # Override decision behavior
-            trader.decision_engine = DecisionEngine()
+            # Override with EXTENSION-specific DecisionEngine
+            trader.decision_engine = DecisionEngine(
+                min_confidence=self.min_confidence,
+                max_leverage=self.max_leverage
+            )
+            # Extension uses lower confidence threshold for strategy pre-filter
+            trader.decider = StrategyDecider(
+                strategy_names=self.strategy_names,
+                scanner=self.scanner,
+                min_confidence=self.min_confidence
+            )
 
             self.traders.append(trader)
 
@@ -102,47 +125,122 @@ class ExtensionEngine:
     # =========================
     def _cycle(self, trader: PaperTrader):
 
-        candles = trader.market.get_klines(trader.symbol, trader.interval, 100)
+        logger.info(f"---- {trader.symbol} EXTENSION CYCLE ----")
 
-        if not candles:
+        # Fetch MTF candles
+        candles_1m = trader.market.get_klines(trader.symbol, "1m", 100)
+        candles_15m = trader.market.get_klines(trader.symbol, "15m", 50)
+        candles_1h = trader.market.get_klines(trader.symbol, "1h", 20)
+
+        mtf_candles = {
+            "1m": candles_1m,
+            "15m": candles_15m,
+            "1h": candles_1h
+        }
+
+        if not candles_1m:
+            logger.warning("No 1m market data")
             return
 
-        current_price = candles[-1][4]
+        current_price = candles_1m[-1][4]
 
         sentiment = trader.news.get_sentiment(trader.symbol.split("/")[0])
 
-        raw = trader.decider.decide(candles, sentiment)
+        raw = trader.decider.decide(mtf_candles, sentiment, trader.symbol)
+        logger.info(f"[EXTENSION RAW] {trader.symbol}: {raw}")
 
         trade = trader.decision_engine.build(raw)
+        logger.info(f"[EXTENSION TRADE] {trader.symbol}: {trade}")
 
         # =========================
-        # ⚡ FORCE HIGH RISK LOGIC
+        # 📥 OPEN TRADE (WITH FILTERS)
         # =========================
         if trade.get("action") == "TRADE":
 
-            # Increase leverage aggressively
-            trade["leverage"] = min(
-                trade.get("leverage", 1) + 2,
-                EXTENSION_MAX_LEVERAGE
-            )
+            now = time.time()
+            side = trade.get("side")
 
-            # Optional: slightly tighter SL (more aggressive)
-            if trade["side"] == "LONG":
-                trade["stop_loss"] *= 0.995
+            # ⏳ SYMBOL COOLDOWN
+            last_symbol_trade = trader.symbol_cooldowns.get(trader.symbol, 0)
+            if now - last_symbol_trade < trader.symbol_cooldown:
+                logger.info(f"Symbol cooldown active for {trader.symbol}, skipping")
             else:
-                trade["stop_loss"] *= 1.005
+                # ⏳ DIRECTION COOLDOWN
+                direction_key = f"{trader.symbol}_{side}"
+                last_direction_trade = trader.direction_cooldowns.get(direction_key, 0)
+                if now - last_direction_trade < trader.direction_cooldown:
+                    logger.info(f"Direction cooldown active for {direction_key}, skipping")
+                else:
+                    # 🚫 SAME STRATEGY
+                    if trade.get("strategy") == trader.last_strategy:
+                        logger.info("Same strategy repeated, skipping")
+                    else:
+                        # 🚫 PRICE TOO CLOSE
+                        if trader.last_entry_price:
+                            change = abs(trade["entry"] - trader.last_entry_price) / trade["entry"]
+                            if change < 0.001:
+                                logger.info("Price too similar, skipping")
+                            else:
+                                # ⚡ APPLY AGGRESSIVE MODS
+                                trade["leverage"] = min(
+                                    trade.get("leverage", 1) + 2,
+                                    EXTENSION_MAX_LEVERAGE
+                                )
 
-            size = trader.sizer.size(trade["entry"], trade["stop_loss"])
-            trade["size"] = size
+                                if trade["side"] == "LONG":
+                                    trade["stop_loss"] *= 0.995
+                                else:
+                                    trade["stop_loss"] *= 1.005
 
-            opened = trader.manager.open_trade(trade)
+                                # 📏 SIZE
+                                trade["size"] = trader.sizer.size(
+                                    trade["entry"], trade["stop_loss"]
+                                )
 
-            if opened:
-                logger.info(f"⚡ Extension trade: {trade}")
-                self.telegram.send_trade(trade, trader.symbol)
+                                opened = trader.manager.open_trade(trade)
 
-        # Update trades
+                                if opened:
+                                    # 🗄 SAVE TO DB
+                                    if trader.repo:
+                                        trade_id = trader.repo.insert_trade(trade, trader.symbol)
+                                        trade["db_id"] = trade_id
+
+                                    # 📊 GENERATE CHART
+                                    try:
+                                        chart_path = trader.chart.generate_trade_chart(
+                                            symbol=trader.symbol,
+                                            candles=candles_1m,
+                                            entry=trade["entry"],
+                                            stop_loss=trade["stop_loss"],
+                                            take_profit=trade["take_profit"]
+                                        )
+                                    except Exception as e:
+                                        logger.error(f"Chart generation error: {e}")
+                                        chart_path = None
+
+                                    logger.info(f"⚡ Extension trade opened: {trade}")
+
+                                    # 📤 TELEGRAM (use extension bot)
+                                    self.telegram.send_trade(trade, trader.symbol, chart_path)
+
+                                    # 🔥 UPDATE CONTROL STATE
+                                    now = time.time()
+                                    trader.symbol_cooldowns[trader.symbol] = now
+                                    trader.direction_cooldowns[f"{trader.symbol}_{side}"] = now
+                                    trader.last_strategy = trade.get("strategy")
+                                    trader.last_entry_price = trade["entry"]
+        else:
+            logger.info(f"Extension no trade: {trade.get('reason', 'unknown')}")
+
+        # =========================
+        # 📊 UPDATE TRADES (always)
+        # =========================
         trader.manager.update_trades(current_price)
+
+        # =========================
+        # 💰 HANDLE CLOSED TRADES (always)
+        # =========================
+        trader._handle_closed_trades()
 
     # =========================
     # 🛑 STOP ENGINE

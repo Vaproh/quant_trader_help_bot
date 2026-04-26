@@ -117,16 +117,57 @@ class Stats:
             return 0.0
 
     # =========================
+    # 📈 WIN STREAK
+    # =========================
+    def win_streak(self) -> int:
+        try:
+            streak = 0
+            max_streak = 0
+            for t in self.trades:
+                if t.get("result") == "WIN":
+                    streak += 1
+                    max_streak = max(max_streak, streak)
+                else:
+                    streak = 0
+            return max_streak
+        except Exception as e:
+            logger.error(f"Win streak error: {e}")
+            return 0
+
+    # =========================
+    # 📉 LOSS STREAK
+    # =========================
+    def loss_streak(self) -> int:
+        try:
+            streak = 0
+            max_streak = 0
+            for t in self.trades:
+                if t.get("result") == "LOSS":
+                    streak += 1
+                    max_streak = max(max_streak, streak)
+                else:
+                    streak = 0
+            return max_streak
+        except Exception as e:
+            logger.error(f"Loss streak error: {e}")
+            return 0
+
+    # =========================
     # 📊 SUMMARY
     # =========================
     def summary(self) -> Dict:
 
+        total = self.total_trades()
+        wr = self.win_rate()
+
         return {
-            "total_trades": self.total_trades(),
-            "win_rate": round(self.win_rate(), 2),
+            "total_trades": total,
+            "win_rate": round(wr, 2),
             "avg_win": round(self.avg_win(), 2),
             "avg_loss": round(self.avg_loss(), 2),
             "total_pnl": round(self.total_pnl(), 2),
             "profit_factor": round(self.profit_factor(), 2),
             "max_drawdown": round(self.max_drawdown(), 2),
+            "win_streak": self.win_streak(),
+            "loss_streak": self.loss_streak(),
         }

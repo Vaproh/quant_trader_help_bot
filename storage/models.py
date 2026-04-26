@@ -45,4 +45,15 @@ def create_tables(conn: sqlite3.Connection):
     )
     """)
 
+    # =========================
+    # 👀 WATCHLIST TABLE
+    # =========================
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS watchlist (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol TEXT UNIQUE,
+        added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
     conn.commit()

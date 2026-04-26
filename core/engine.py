@@ -4,6 +4,8 @@ from typing import List
 
 from utils.logger import get_logger
 from execution.paper_trader import PaperTrader
+from analysis.market_scanner import MarketScanner
+from config.settings import SETTINGS
 
 
 logger = get_logger(__name__)
@@ -14,10 +16,16 @@ class TradingEngine:
     def __init__(
         self,
         traders: List[PaperTrader],
-        cycle_delay: int = 5
+        cycle_delay: int = None,
+        scanner=None
     ):
         self.traders = traders
-        self.cycle_delay = cycle_delay
+        self.cycle_delay = cycle_delay or SETTINGS["engine"]["cycle_delay"]
+        self.scanner = scanner
+
+        # Assign scanner to traders
+        for trader in self.traders:
+            trader.scanner = self.scanner
         self.threads: List[threading.Thread] = []
         self.running = False
 
@@ -46,10 +54,16 @@ class TradingEngine:
     # 🧵 RUN SINGLE TRADER
     # =========================
     def _run_trader(self, trader: PaperTrader):
-        try:
-            trader.start()
-        except Exception as e:
-            logger.error(f"Trader thread crashed: {e}")
+        while self.running:
+            try:
+                trader.start()
+            except Exception as e:
+                logger.error(f"Trader {trader.symbol} crashed: {e}, restarting in 5 seconds")
+                trader.running = False  # Ensure stopped
+                time.sleep(5)
+            else:
+                # Normal exit when stopped
+                break
 
     # =========================
     # 🛑 STOP ENGINE

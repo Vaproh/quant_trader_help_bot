@@ -1,6 +1,6 @@
 # 🔥 Trading Bot Roadmap
 
-> **Current Status:** Phase 1 (Stabilization & Core Fixes)  
+> **Current Status:** Phase 2 Complete - Ready for Phase 3
 > **Objective:** Transition from a basic signal bot to a high-intelligence market execution engine.
 
 ---
@@ -9,21 +9,21 @@
 *Focus: Eliminating silent failures, ensuring execution reliability, and cleaning up signal logic.*
 
 ### 🔴 Critical Reliability Fixes
-- [ ] **Telegram Connectivity:** Detect API failures/rate limits and implement retry mechanisms.
-- [ ] **Dead-Drop Protection:** Add "Last Message Sent" watchdog; trigger alerts if the bot is alive but silent.
-- [ ] **Thread Safety:** Implement auto-restart for crashed threads and logging for silent failures.
-- [ ] **State Persistence:** Ensure trades actually close and TP/SL values are tracked across restarts.
+- [x] **Telegram Connectivity:** Detect API failures/rate limits and implement retry mechanisms.
+- [x] **Dead-Drop Protection:** Add "Last Message Sent" watchdog; trigger alerts if the bot is alive but silent.
+- [x] **Thread Safety:** Implement auto-restart for crashed threads and logging for silent failures.
+- [x] **State Persistence:** Ensure trades actually close and TP/SL values are tracked across restarts.
 
 ### 🧠 Signal & Strategy Logic
-- [ ] **Deduplication:** Replace strategy-based skip logic with trade-based detection (prevent duplicate entries on the same setup).
-- [ ] **Confidence Normalization:** Standardize confidence scores across all strategies (prevent 50% spam or fake 100% inflation).
-- [ ] **Dynamic Cooldowns:** Implement per-symbol (10-20m) and per-direction (Long/Short) cooldowns to prevent flip-trade spam.
-- [ ] **Field Validation:** Ensure every strategy returns: `strategy_name`, `confidence`, and `reason`.
+- [x] **Deduplication:** Replace strategy-based skip logic with trade-based detection (prevent duplicate entries on the same setup).
+- [x] **Confidence Normalization:** Standardize confidence scores across all strategies (prevent 50% spam or fake 100% inflation).
+- [x] **Dynamic Cooldowns:** Implement per-symbol (10-20m) and per-direction (Long/Short) cooldowns to prevent flip-trade spam.
+- [x] **Field Validation:** Ensure every strategy returns: `strategy_name`, `confidence`, and `reason`.
 
 ### 📊 Core Analytics (Stats v1)
-- [ ] **Performance Tracking:** Track win/loss streaks and max drawdown.
-- [ ] **Time-Based Reports:** Automated stats every 1 hour and a daily performance summary.
-- [ ] **Equity Tracking:** Basic equity curve logging.
+- [x] **Performance Tracking:** Track win/loss streaks and max drawdown.
+- [x] **Time-Based Reports:** Automated stats every 1 hour and a daily performance summary.
+- [x] **Equity Tracking:** Basic equity curve logging.
 
 ---
 
@@ -31,21 +31,21 @@
 *Focus: Context-awareness, multi-timeframe confluence, and dynamic coin selection.*
 
 ### ⚡ Market Regime & Scanning
-- [ ] **Regime Detection:** Implement engine to distinguish between Trending vs. Ranging markets.
-- [ ] **Volatility Filter:** Automatically switch strategies or skip trading during "Chop Zones" or low liquidity.
-- [ ] **Global Scanner:** - **Global Scan (30m):** Find top movers and volume spikes across the entire market.
+- [x] **Regime Detection:** Implement engine to distinguish between Trending vs. Ranging markets.
+- [x] **Volatility Filter:** Automatically switch strategies or skip trading during "Chop Zones" or low liquidity.
+- [x] **Global Scanner:** - **Global Scan (30m):** Find top movers and volume spikes across the entire market.
     - **Active Pool (~20 coins):** Continuously monitor high-potential assets.
     - **Hot List (~5 coins):** Highest priority for immediate signal execution.
 
 ### 🎯 Confluence & Execution
-- [ ] **Multi-Timeframe (MTF) Analysis:**
+- [x] **Multi-Timeframe (MTF) Analysis:**
     - `1m` for entries, `15m` for structure, `1h/4h` for macro bias.
-- [ ] **Confluence Scoring:** Weighted scoring based on RSI alignment, Volume confirmation, and Trend alignment.
-- [ ] **Smart Filtering:** Auto-skip conflicting signals (e.g., Long signal on 1m vs. Heavy Resistance on 15m).
+- [x] **Confluence Scoring:** Weighted scoring based on RSI alignment, Volume confirmation, and Trend alignment.
+- [x] **Smart Filtering:** Auto-skip conflicting signals (e.g., Long signal on 1m vs. Heavy Resistance on 15m).
 
 ### 📈 Enhanced Visualization
-- [ ] **Telegram Charting:** Generate and send charts with annotated Entry, SL, and TP levels.
-- [ ] **Dashboard Commands:**
+- [x] **Telegram Charting:** Generate and send charts with annotated Entry, SL, and TP levels.
+- [x] **Dashboard Commands:**
     - `/stats` — Current session performance.
     - `/equity` — Visual equity curve snapshot.
     - `/best` — Identify top-performing coin/strategy pairs.

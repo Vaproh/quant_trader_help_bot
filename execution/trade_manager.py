@@ -13,6 +13,13 @@ class TradeManager:
         self.max_trades = max_trades
 
     # =========================
+    # 📥 LOAD ACTIVE TRADES
+    # =========================
+    def load_active_trades(self, trades: List[Dict]):
+        self.active_trades = trades
+        logger.info(f"Loaded {len(trades)} active trades")
+
+    # =========================
     # 📥 OPEN TRADE
     # =========================
     def open_trade(self, trade: Dict) -> bool:

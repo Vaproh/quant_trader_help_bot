@@ -1,8 +1,11 @@
 import requests
+import time
+import threading
 from typing import Dict
 
 from utils.logger import get_logger
 from config.secrets import SECRETS
+from config.settings import SETTINGS
 from utils.helpers import format_price, safe_round
 
 
@@ -28,8 +31,14 @@ class TelegramMainBot:
 
     def __init__(self):
         self.token = SECRETS["telegram_main_token"]
-        self.chat_id = SECRETS["telegram_main_chat_id"]
+        self.chat_id = int(SECRETS["telegram_main_chat_id"])
         self.base_url = f"https://api.telegram.org/bot{self.token}"
+
+        self.last_sent = time.time()
+        self.watchdog_interval = SETTINGS["telegram"]["watchdog_interval"]
+        self.silence_threshold = SETTINGS["telegram"]["silence_threshold"]
+        self.watchdog_thread = threading.Thread(target=self._watchdog_loop, daemon=True)
+        self.watchdog_thread.start()
 
     # =========================
     # 📤 SEND MESSAGE
@@ -54,6 +63,7 @@ class TelegramMainBot:
 
                 if response.status_code == 200:
                     logger.info("Telegram message sent")
+                    self.last_sent = time.time()
                     return True
                 else:
                     logger.warning(
@@ -93,6 +103,7 @@ class TelegramMainBot:
 
                     if response.status_code == 200:
                         logger.info("Telegram image sent")
+                        self.last_sent = time.time()
                         return True
                     else:
                         logger.warning(
@@ -104,6 +115,17 @@ class TelegramMainBot:
 
         logger.error("Telegram image FAILED after retries")
         return False
+
+    # =========================
+    # 🐕 WATCHDOG LOOP
+    # =========================
+    def _watchdog_loop(self):
+        while True:
+            time.sleep(self.watchdog_interval)
+            now = time.time()
+            if now - self.last_sent > self.silence_threshold:
+                alert_msg = "⚠️ *BOT SILENCE ALERT* ⚠️\n\nBot is running but hasn't sent any messages in the last 10 minutes. Possible issue detected."
+                self.send_message(alert_msg)
 
     # =========================
     # 📊 FORMAT TRADE MESSAGE

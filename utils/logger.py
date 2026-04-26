@@ -6,7 +6,7 @@ from typing import Optional
 
 
 LOG_DIR = "logs"
-LOG_FILE = "logs.log"
+LOG_FILE = "logs.log1"
 
 
 def setup_logger(

@@ -25,7 +25,7 @@ class TelegramExtensionBot:
 
     def __init__(self):
         self.token = SECRETS["telegram_extension_token"]
-        self.chat_id = SECRETS["telegram_extension_chat_id"]
+        self.chat_id = int(SECRETS["telegram_extension_chat_id"])
         self.base_url = f"https://api.telegram.org/bot{self.token}"
 
     # =========================
