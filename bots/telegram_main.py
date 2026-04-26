@@ -35,41 +35,74 @@ class TelegramMainBot:
     # =========================
     def send_message(self, text: str):
 
-        try:
-            url = f"{self.base_url}/sendMessage"
+        url = f"{self.base_url}/sendMessage"
 
-            payload = {
-                "chat_id": self.chat_id,
-                "text": text,
-                "parse_mode": "Markdown"
-            }
+        payload = {
+            "chat_id": self.chat_id,
+            "text": text,
+            "parse_mode": "Markdown"
+        }
 
-            requests.post(url, json=payload)
+        for attempt in range(3):
+            try:
+                response = requests.post(
+                    url,
+                    json=payload,
+                    timeout=10
+                )
 
-        except Exception as e:
-            logger.error(f"Telegram send error: {e}")
+                if response.status_code == 200:
+                    logger.info("Telegram message sent")
+                    return True
+                else:
+                    logger.warning(
+                        f"Telegram failed [{response.status_code}]: {response.text}"
+                    )
+
+            except Exception as e:
+                logger.error(f"Telegram send error (attempt {attempt + 1}): {e}")
+
+        logger.error("Telegram message FAILED after retries")
+        return False
 
     # =========================
     # 📤 SEND IMAGE
     # =========================
     def send_image(self, image_path: str, caption: str = ""):
 
-        try:
-            url = f"{self.base_url}/sendPhoto"
+        url = f"{self.base_url}/sendPhoto"
 
-            with open(image_path, "rb") as img:
-                files = {"photo": img}
+        for attempt in range(3):
+            try:
+                with open(image_path, "rb") as img:
 
-                data = {
-                    "chat_id": self.chat_id,
-                    "caption": caption,
-                    "parse_mode": "Markdown"
-                }
+                    files = {"photo": img}
+                    data = {
+                        "chat_id": self.chat_id,
+                        "caption": caption,
+                        "parse_mode": "Markdown"
+                    }
 
-                requests.post(url, files=files, data=data)
+                    response = requests.post(
+                        url,
+                        files=files,
+                        data=data,
+                        timeout=15
+                    )
 
-        except Exception as e:
-            logger.error(f"Telegram image send error: {e}")
+                    if response.status_code == 200:
+                        logger.info("Telegram image sent")
+                        return True
+                    else:
+                        logger.warning(
+                            f"Telegram image failed [{response.status_code}]: {response.text}"
+                        )
+
+            except Exception as e:
+                logger.error(f"Telegram image error (attempt {attempt + 1}): {e}")
+
+        logger.error("Telegram image FAILED after retries")
+        return False
 
     # =========================
     # 📊 FORMAT TRADE MESSAGE
